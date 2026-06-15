@@ -29,13 +29,21 @@ class VideoPlayer:
         self.enable_detect = True
         self.enable_crop = True
         self.enable_allignment = True
+        self.enable_landmarks = True
 
-        self.fps = 0
         self.detect_ts = 0
         self.frame = np.zeros((480, 640, 3), dtype=np.uint8)
         self.detectframe = np.zeros((480, 640, 3), dtype=np.uint8)
         self.cropframe = np.zeros((480, 640, 3), dtype=np.uint8)
         self.alignframe = np.zeros((256, 256, 3), dtype=np.uint8)
+        self.landmarksframe = np.zeros((256, 256, 3), dtype=np.uint8)
+        self.voidlandmarksframe = np.zeros((256, 256, 3), dtype=np.uint8)
+
+        # TODO: Landmarks Group
+        # Sub Gorup
+        self.lefteyeframe = np.zeros((128, 128, 3), dtype=np.uint8)
+        self.righteyeframe = np.zeros((128, 128, 3), dtype=np.uint8)
+        self.noseframe = np.zeros((128, 128, 3), dtype=np.uint8)
 
     def open(self, path):
         if self.detect_ts != 0:
@@ -47,8 +55,6 @@ class VideoPlayer:
 
         if not self.cap.isOpened():
             return
-
-        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
 
         self.path = path
         self.total = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -115,19 +121,58 @@ class VideoPlayer:
         if temporalPartition(self.current, 3):
             faces = detectFaces(frame, self.detect_ts)
             if self.enable_detect:
-                self.detect_ts = int(self.current / self.fps) * 1000
+                self.detect_ts += 33
                 detframe = drawFaces(frame, faces)
             if self.enable_crop and self.enable_allignment:
                 self.cropframe = cropFaces(frame, faces)
-                result = makeLandmarksFaces(self.cropframe, self.detect_ts)
+                result = makeLandmarksFaces(
+                    self.cropframe, self.detect_ts, face_allandmaker
+                )
 
-                if result and result.face_landmarks:
+                if result and result.face_landmarks and self.enable_allignment:
                     self.alignframe = rotateFaces(
                         self.cropframe, result.face_landmarks[0]
                     )
 
                 else:
                     self.alignframe = np.zeros((256, 256, 3), dtype=np.uint8)
+
+                aligntlandsult = makeLandmarksFaces(
+                    self.alignframe, self.detect_ts, face_landmaker
+                )
+                if (
+                    aligntlandsult
+                    and aligntlandsult.face_landmarks
+                    and self.enable_landmarks
+                ):
+                    self.landmarksframe = drawLandmarks(
+                        self.alignframe, aligntlandsult.face_landmarks[0]
+                    )
+                    self.voidlandmarksframe = drawLandmarksVoid(
+                        aligntlandsult.face_landmarks[0]
+                    )
+                    self.lefteyeframe = cropTheFuckingLandmarks(
+                        self.alignframe,
+                        aligntlandsult.face_landmarks[0],
+                        vidpath.L_EYE_SUBGROUP,
+                    )
+
+                    self.righteyeframe = cropTheFuckingLandmarks(
+                        self.alignframe,
+                        aligntlandsult.face_landmarks[0],
+                        vidpath.R_EYE_SUBGROUP,
+                    )
+                    self.noseframe = cropTheFuckingLandmarks(
+                        self.alignframe,
+                        aligntlandsult.face_landmarks[0],
+                        vidpath.NOSE_SUBGROUP,
+                    )
+                else:
+                    self.landmarksframe = np.zeros((256, 256, 3), dtype=np.uint8)
+                    self.voidlandmarksframe = np.zeros((256, 256, 3), dtype=np.uint8)
+                    self.lefteyeframe = np.zeros((128, 128, 3), dtype=np.uint8)
+                    self.righteyeframe = np.zeros((128, 128, 3), dtype=np.uint8)
+                    self.noseframe = np.zeros((128, 128, 3), dtype=np.uint8)
             else:
                 self.cropframe = np.zeros((256, 256, 3), dtype=np.uint8)
                 self.alignframe = np.zeros((256, 256, 3), dtype=np.uint8)
@@ -137,6 +182,15 @@ class VideoPlayer:
 
     def resetDetector(self):
         self.detect_ts = 0
+        global face_detector
+        global face_allandmaker
+        global face_landmaker
+        face_detector.close()
+        face_detector = vision.FaceDetector.create_from_options(_FACE_OPT)
+        face_allandmaker.close()
+        face_allandmaker = vision.FaceLandmarker.create_from_options(_LANDMARKS_OPT)
+        face_landmaker.close()
+        face_landmaker = vision.FaceLandmarker.create_from_options(_LANDMARKS_OPT)
 
 
 player = VideoPlayer()
@@ -163,7 +217,8 @@ _LANDMARKS_OPT = vision.FaceLandmarkerOptions(
 )
 
 face_detector = vision.FaceDetector.create_from_options(_FACE_OPT)
-face_landmarker = vision.FaceLandmarker.create_from_options(_LANDMARKS_OPT)
+face_allandmaker = vision.FaceLandmarker.create_from_options(_LANDMARKS_OPT)
+face_landmaker = vision.FaceLandmarker.create_from_options(_LANDMARKS_OPT)
 
 
 def loadVideo(sender, data):
@@ -192,6 +247,14 @@ def onEnableDetect(sender):
 
 def onEnableCrop(sender):
     player.enable_crop = dpg.get_value(sender)
+
+
+def onEnableAllignment(sender):
+    player.enable_allignment = dpg.get_value(sender)
+
+
+def onEnableLandmarks(sender):
+    player.enable_landmarks = dpg.get_value(sender)
 
 
 # Fungsi untuk melakukan partisi waktu pada videos
@@ -232,7 +295,7 @@ def detectFaces(f, t_ms):
     return faces
 
 
-def makeLandmarksFaces(f, ts):
+def makeLandmarksFaces(f, t_ms, ln):
     rgb = cv2.cvtColor(
         f,
         cv2.COLOR_BGR2RGB,
@@ -244,17 +307,13 @@ def makeLandmarksFaces(f, ts):
     )
 
     try:
-        return face_landmarker.detect_for_video(
-            mp_img,
-            ts,
-        )
-
-    except:
-        return None
+        return ln.detect_for_video(mp_img, t_ms)
+    except ValueError:
+        return []
 
 
-def drawFaces(frame, faces):
-    out = frame.copy()
+def drawFaces(fr, faces):
+    out = fr.copy()
     for x, y, w, h in faces:
         cv2.rectangle(out, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
@@ -269,6 +328,20 @@ def drawLandmarks(fr, ln):
         y = int(p.y * h)
 
         cv2.circle(out, (x, y), 2, (0, 255, 255), -1)
+
+    return out
+
+
+def drawLandmarksVoid(ln, size=(256, 256)):
+    h, w = size
+    out = np.zeros((h, w, 3), dtype=np.uint8)
+    if ln is None:
+        return out
+    for p in ln:
+        x = int(p.x * w)
+        y = int(p.y * h)
+        if 0 <= x < w and 0 <= y < h:
+            cv2.circle(out, (x, y), 2, (0, 255, 255), -1)
 
     return out
 
@@ -288,6 +361,25 @@ def cropFaces(fr, fa):
     if crop.size == 0:
         return np.zeros((256, 256, 3), dtype=np.uint8)
     return cv2.resize(crop, (256, 256))
+
+
+def cropTheFuckingLandmarks(fr, ln, ids):
+    h, w = fr.shape[:2]
+    pts = []
+    for idx in ids:
+        p = ln[idx]
+        pts.append((int(p.x * w), int(p.y * h)))
+
+    pts = np.array(pts)
+    x1 = max(0, pts[:, 0].min() - 20)
+    y1 = max(0, pts[:, 1].min() - 20)
+    x2 = min(w, pts[:, 0].max() + 20)
+    y2 = min(h, pts[:, 1].max() + 20)
+    crop = fr[y1:y2, x1:x2]
+    if crop.size == 0:
+        return np.zeros((128, 128, 3), dtype=np.uint8)
+
+    return cv2.resize(crop, [128, 128])
 
 
 def rotateFaces(fr, ln):
@@ -326,27 +418,57 @@ def videoStreamOut(p: str, i: int, ti: str):
     cap.release()
 
 
-def _renderFrame(frame, detframe, cropframe, alignframe):
+def _renderFrame(
+    frame,
+    detframe,
+    cropframe,
+    alignframe,
+    landmarksframe,
+    voidlandmarksframe,
+    righteyeframe,
+    lefteyeframe,
+    noseframe,
+):
     frame = cv2.resize(frame, (640, 480))
     detframe = cv2.resize(detframe, (640, 480))
     cropframe = cv2.resize(cropframe, (256, 256))
     alignframe = cv2.resize(alignframe, (256, 256))
+    landmarksframe = cv2.resize(landmarksframe, (256, 256))
+    voidlandmarksframe = cv2.resize(voidlandmarksframe, (256, 256))
+    righteyeframe = cv2.resize(righteyeframe, (128, 128))
+    lefteyeframe = cv2.resize(lefteyeframe, (128, 128))
+    noseframe = cv2.resize(noseframe, (128, 128))
 
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     detframe = cv2.cvtColor(detframe, cv2.COLOR_BGR2RGB)
     cropframe = cv2.cvtColor(cropframe, cv2.COLOR_BGR2RGB)
     alignframe = cv2.cvtColor(alignframe, cv2.COLOR_BGR2RGB)
+    landmarksframe = cv2.cvtColor(landmarksframe, cv2.COLOR_BGR2RGB)
+    voidlandmarksframe = cv2.cvtColor(voidlandmarksframe, cv2.COLOR_BGR2RGB)
+    righteyeframe = cv2.cvtColor(righteyeframe, cv2.COLOR_BGR2RGB)
+    lefteyeframe = cv2.cvtColor(lefteyeframe, cv2.COLOR_BGR2RGB)
+    noseframe = cv2.cvtColor(noseframe, cv2.COLOR_BGR2RGB)
 
     frame = frame.astype(np.float32) / 255.0
     detframe = detframe.astype(np.float32) / 255.0
     cropframe = cropframe.astype(np.float32) / 255.0
     alignframe = alignframe.astype(np.float32) / 255.0
+    landmarksframe = landmarksframe.astype(np.float32) / 255.0
+    voidlandmarksframe = voidlandmarksframe.astype(np.float32) / 255.0
+    lefteyeframe = lefteyeframe.astype(np.float32) / 255.0
+    righteyeframe = righteyeframe.astype(np.float32) / 255.0
+    noseframe = noseframe.astype(np.float32) / 255.0
 
     return (
         frame.flatten(),
         detframe.flatten(),
         cropframe.flatten(),
         alignframe.flatten(),
+        landmarksframe.flatten(),
+        voidlandmarksframe.flatten(),
+        righteyeframe.flatten(),
+        lefteyeframe.flatten(),
+        noseframe.flatten(),
     )
 
 
@@ -392,6 +514,56 @@ def _launcUi():
                 dtype=np.float32,
             ),
             tag="av",
+            format=dpg.mvFormat_Float_rgb,
+        )
+        dpg.add_raw_texture(
+            256,
+            256,
+            np.zeros(
+                256 * 256 * 3,
+                dtype=np.float32,
+            ),
+            tag="lv",
+            format=dpg.mvFormat_Float_rgb,
+        )
+        dpg.add_raw_texture(
+            256,
+            256,
+            np.zeros(
+                256 * 256 * 3,
+                dtype=np.float32,
+            ),
+            tag="vlv",
+            format=dpg.mvFormat_Float_rgb,
+        )
+        dpg.add_raw_texture(
+            128,
+            128,
+            np.zeros(
+                128 * 128 * 3,
+                dtype=np.float32,
+            ),
+            tag="lecv",
+            format=dpg.mvFormat_Float_rgb,
+        )
+        dpg.add_raw_texture(
+            128,
+            128,
+            np.zeros(
+                128 * 128 * 3,
+                dtype=np.float32,
+            ),
+            tag="recv",
+            format=dpg.mvFormat_Float_rgb,
+        )
+        dpg.add_raw_texture(
+            128,
+            128,
+            np.zeros(
+                128 * 128 * 3,
+                dtype=np.float32,
+            ),
+            tag="ncv",
             format=dpg.mvFormat_Float_rgb,
         )
 
@@ -441,6 +613,23 @@ def _launcUi():
         dpg.add_image("cvv")
     with dpg.window(label="Face Allignment", width=256, height=256, pos=[1280, 256]):
         dpg.add_image("av")
+    with dpg.window(label="Face Landmarks", width=256, height=256, pos=[1536, 0]):
+        dpg.add_image("lv")
+    with dpg.window(
+        label="Void Face Landmarks", width=256, height=256, pos=[1536, 256]
+    ):
+        dpg.add_image("vlv")
+    with dpg.window(label="Right Eye Crop", width=128, height=128, pos=[1536, 512]):
+        dpg.add_image("recv")
+    with dpg.window(
+        label="Left Eye Crop",
+        width=128,
+        height=128,
+        pos=[1280, 512],  # 1536
+    ):
+        dpg.add_image("lecv")
+    with dpg.window(label="Nose Crop", width=128, height=128, pos=[1408, 512]):
+        dpg.add_image("ncv")
 
     with dpg.window(
         label="Control Panels",
@@ -451,6 +640,13 @@ def _launcUi():
     ):
         dpg.add_checkbox(
             label="Face Detect", default_value=True, callback=onEnableDetect
+        )
+        dpg.add_checkbox(label="Face Crops", default_value=True, callback=onEnableCrop)
+        dpg.add_checkbox(
+            label="Face Allignment", default_value=True, callback=onEnableAllignment
+        )
+        dpg.add_checkbox(
+            label="Face Landmarks", default_value=True, callback=onEnableLandmarks
         )
 
     with dpg.file_dialog(
@@ -479,14 +675,29 @@ def _launcUi():
     while dpg.is_dearpygui_running():
         player.update()
 
-        (tex, dettex, crtex, altex) = _renderFrame(
-            player.frame, player.detectframe, player.cropframe, player.alignframe
+        (tex, dettex, crtex, altex, landtex, voidlandtex, rectex, lectex, nctex) = (
+            _renderFrame(
+                player.frame,
+                player.detectframe,
+                player.cropframe,
+                player.alignframe,
+                player.landmarksframe,
+                player.voidlandmarksframe,
+                player.righteyeframe,
+                player.lefteyeframe,
+                player.noseframe,
+            )
         )
 
         dpg.set_value("ov", tex)
         dpg.set_value("fdv", dettex)
         dpg.set_value("cvv", crtex)
         dpg.set_value("av", altex)
+        dpg.set_value("lv", landtex)
+        dpg.set_value("vlv", voidlandtex)
+        dpg.set_value("recv", rectex)
+        dpg.set_value("lecv", lectex)
+        dpg.set_value("ncv", nctex)
 
         dpg.configure_item(
             "timeline",

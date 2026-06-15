@@ -26,6 +26,12 @@ GC_DFDVIDPATH = os.path.join(GC_PATH, "img/DeepFakesDetection")
 # Model Path
 GC_MODELPATH = os.path.join(GC_PATH, "models")
 
+L_EYE_SUBGROUP = [33, 133, 160, 159, 158, 157, 173]
+
+R_EYE_SUBGROUP = [263, 362, 387, 386, 385, 384, 398]
+
+NOSE_SUBGROUP = [168, 6, 197, 195, 4]
+
 
 if __name__ == "__main__":
     pass
